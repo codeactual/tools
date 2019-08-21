@@ -75,7 +75,7 @@ const (
 
 	// Deprecated: LoadImports exists for historical compatibility
 	// and should not be used. Please directly specify the needed fields using the Need values.
-	LoadImports = LoadFiles | NeedImports | NeedDeps
+	LoadImports = LoadFiles | NeedImports
 
 	// Deprecated: LoadTypes exists for historical compatibility
 	// and should not be used. Please directly specify the needed fields using the Need values.
@@ -87,7 +87,7 @@ const (
 
 	// Deprecated: LoadAllSyntax exists for historical compatibility
 	// and should not be used. Please directly specify the needed fields using the Need values.
-	LoadAllSyntax = LoadSyntax
+	LoadAllSyntax = LoadSyntax | NeedDeps
 )
 
 // A Config specifies details about how packages should be loaded.
@@ -496,8 +496,8 @@ func (ld *loader) refine(roots []string, list ...*Package) ([]*Package, error) {
 		}
 		lpkg := &loaderPackage{
 			Package:   pkg,
-			needtypes: (ld.Mode&(NeedTypes|NeedTypesInfo) != 0 && rootIndex < 0) || rootIndex >= 0,
-			needsrc: (ld.Mode&(NeedSyntax|NeedTypesInfo) != 0 && rootIndex < 0) || rootIndex >= 0 ||
+			needtypes: (ld.Mode&(NeedTypes|NeedTypesInfo) != 0 && ld.Mode&NeedDeps != 0 && rootIndex < 0) || rootIndex >= 0,
+			needsrc: (ld.Mode&(NeedSyntax|NeedTypesInfo) != 0 && ld.Mode&NeedDeps != 0 && rootIndex < 0) || rootIndex >= 0 ||
 				len(ld.Overlay) > 0 || // Overlays can invalidate export data. TODO(matloob): make this check fine-grained based on dependencies on overlaid files
 				pkg.ExportFile == "" && pkg.PkgPath != "unsafe",
 		}
@@ -545,8 +545,7 @@ func (ld *loader) refine(roots []string, list ...*Package) ([]*Package, error) {
 		stack = append(stack, lpkg) // push
 		stubs := lpkg.Imports       // the structure form has only stubs with the ID in the Imports
 		// If NeedImports isn't set, the imports fields will all be zeroed out.
-		// If NeedDeps isn't also set we want to keep the stubs.
-		if ld.Mode&NeedImports != 0 && ld.Mode&NeedDeps != 0 {
+		if ld.Mode&NeedImports != 0 {
 			lpkg.Imports = make(map[string]*Package, len(stubs))
 			for importPath, ipkg := range stubs {
 				var importErr error
@@ -594,7 +593,7 @@ func (ld *loader) refine(roots []string, list ...*Package) ([]*Package, error) {
 			visit(lpkg)
 		}
 	}
-	if ld.Mode&NeedDeps != 0 { // TODO(matloob): This is only the case if NeedTypes is also set, right?
+	if ld.Mode&NeedImports != 0 && ld.Mode&NeedTypes != 0 {
 		for _, lpkg := range srcPkgs {
 			// Complete type information is required for the
 			// immediate dependencies of each source package.
@@ -619,7 +618,6 @@ func (ld *loader) refine(roots []string, list ...*Package) ([]*Package, error) {
 	}
 
 	result := make([]*Package, len(initial))
-	importPlaceholders := make(map[string]*Package)
 	for i, lpkg := range initial {
 		result[i] = lpkg.Package
 	}
@@ -656,16 +654,6 @@ func (ld *loader) refine(roots []string, list ...*Package) ([]*Package, error) {
 		if ld.Mode&NeedTypesSizes == 0 {
 			ld.pkgs[i].TypesSizes = nil
 		}
-		if ld.Mode&NeedDeps == 0 {
-			for j, pkg := range ld.pkgs[i].Imports {
-				ph, ok := importPlaceholders[pkg.ID]
-				if !ok {
-					ph = &Package{ID: pkg.ID}
-					importPlaceholders[pkg.ID] = ph
-				}
-				ld.pkgs[i].Imports[j] = ph
-			}
-		}
 	}
 	return result, nil
 }
@@ -687,7 +675,6 @@ func (ld *loader) loadRecursive(lpkg *loaderPackage) {
 			}(imp)
 		}
 		wg.Wait()
-
 		ld.loadPackage(lpkg)
 	})
 }
@@ -814,7 +801,7 @@ func (ld *loader) loadPackage(lpkg *loaderPackage) {
 		if ipkg.Types != nil && ipkg.Types.Complete() {
 			return ipkg.Types, nil
 		}
-		log.Fatalf("internal error: nil Pkg importing %q from %q", path, lpkg)
+		log.Fatalf("internal error: package %q without types was imported from %q", path, lpkg)
 		panic("unreachable")
 	})
 
@@ -825,7 +812,7 @@ func (ld *loader) loadPackage(lpkg *loaderPackage) {
 		// Type-check bodies of functions only in non-initial packages.
 		// Example: for import graph A->B->C and initial packages {A,C},
 		// we can ignore function bodies in B.
-		IgnoreFuncBodies: (ld.Mode&(NeedDeps|NeedTypesInfo) == 0) && !lpkg.initial,
+		IgnoreFuncBodies: ld.Mode&NeedDeps == 0 && !lpkg.initial,
 
 		Error: appendError,
 		Sizes: ld.sizes,
@@ -1088,5 +1075,5 @@ func (ld *loader) loadFromExportData(lpkg *loaderPackage) (*types.Package, error
 }
 
 func usesExportData(cfg *Config) bool {
-	return cfg.Mode&NeedExportsFile != 0 || cfg.Mode&NeedTypes != 0 && cfg.Mode&NeedTypesInfo == 0
+	return cfg.Mode&NeedExportsFile != 0 || cfg.Mode&NeedTypes != 0 && cfg.Mode&NeedDeps == 0
 }

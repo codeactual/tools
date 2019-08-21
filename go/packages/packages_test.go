@@ -1350,7 +1350,7 @@ func testContainsOverlayXTest(t *testing.T, exporter packagestest.Exporter) {
 		}}})
 	defer exported.Cleanup()
 	bOverlayXTestFile := filepath.Join(filepath.Dir(exported.File("golang.org/fake", "b/b.go")), "b_overlay_x_test.go")
-	exported.Config.Mode = packages.NeedName | packages.NeedFiles | packages.NeedImports | packages.NeedDeps
+	exported.Config.Mode = packages.NeedName | packages.NeedFiles | packages.NeedImports
 	exported.Config.Overlay = map[string][]byte{bOverlayXTestFile: []byte(`package b_test; import "golang.org/fake/b"`)}
 	initial, err := packages.Load(exported.Config, "file="+bOverlayXTestFile)
 	if err != nil {
@@ -2136,6 +2136,77 @@ const A = http.MethodGet
 		t.Errorf("a.A: got %s, want %s", got, "\"GET\"")
 	}
 
+}
+
+func TestLoadTypesInfoWithoutNeedDeps(t *testing.T) {
+	packagestest.TestAll(t, testLoadTypesInfoWithoutNeedDeps)
+}
+func testLoadTypesInfoWithoutNeedDeps(t *testing.T, exporter packagestest.Exporter) {
+	exported := packagestest.Export(t, exporter, []packagestest.Module{{
+		Name: "golang.org/fake",
+		Files: map[string]interface{}{
+			"a/a.go": `package a; import _ "golang.org/fake/b"`,
+			"b/b.go": `package b`,
+		}}})
+	defer exported.Cleanup()
+
+	exported.Config.Mode = packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports
+	pkgs, err := packages.Load(exported.Config, "golang.org/fake/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := pkgs[0]
+	if pkg.IllTyped {
+		t.Fatal("Loaded package is ill typed")
+	}
+	const expectedImport = "golang.org/fake/b"
+	if _, ok := pkg.Imports[expectedImport]; !ok || len(pkg.Imports) != 1 {
+		t.Fatalf("Imports of loaded package: want [%s], got %v", expectedImport, pkg.Imports)
+	}
+}
+
+func TestLoadWithNeedDeps(t *testing.T) {
+	packagestest.TestAll(t, testLoadWithNeedDeps)
+}
+func testLoadWithNeedDeps(t *testing.T, exporter packagestest.Exporter) {
+	exported := packagestest.Export(t, exporter, []packagestest.Module{{
+		Name: "golang.org/fake",
+		Files: map[string]interface{}{
+			"a/a.go": `package a; import _ "golang.org/fake/b"`,
+			"b/b.go": `package b; import _ "golang.org/fake/c"`,
+			"c/c.go": `package c`,
+		}}})
+	defer exported.Cleanup()
+
+	exported.Config.Mode = packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports | packages.NeedDeps
+	pkgs, err := packages.Load(exported.Config, "golang.org/fake/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 1 {
+		t.Fatalf("Expected 1 package, got %d", len(pkgs))
+	}
+
+	pkgA := pkgs[0]
+	if pkgA.IllTyped {
+		t.Fatal("Loaded package is ill typed")
+	}
+
+	pkgB := pkgA.Imports["golang.org/fake/b"]
+	if pkgB == nil || len(pkgA.Imports) != 1 {
+		t.Fatalf("Imports of loaded package 'a' are invalid: %v", pkgA.Imports)
+	}
+	if pkgB.Types == nil || !pkgB.Types.Complete() || pkgB.TypesInfo == nil {
+		t.Fatalf("Types of package 'b' are nil or incomplete: %v, %v", pkgB.Types, pkgB.TypesInfo)
+	}
+
+	pkgC := pkgB.Imports["golang.org/fake/c"]
+	if pkgC == nil || len(pkgB.Imports) != 1 {
+		t.Fatalf("Imports of loaded package 'c' are invalid: %v", pkgB.Imports)
+	}
+	if pkgC.Types == nil || !pkgC.Types.Complete() || pkgC.TypesInfo == nil {
+		t.Fatalf("Types of package 'b' are nil or incomplete: %v, %v", pkgC.Types, pkgC.TypesInfo)
+	}
 }
 
 func errorMessages(errors []packages.Error) []string {

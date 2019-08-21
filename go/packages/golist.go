@@ -831,7 +831,7 @@ func golistargs(cfg *Config, words []string) []string {
 		fmt.Sprintf("-compiled=%t", cfg.Mode&(NeedCompiledGoFiles|NeedSyntax|NeedTypesInfo|NeedTypesSizes) != 0),
 		fmt.Sprintf("-test=%t", cfg.Tests),
 		fmt.Sprintf("-export=%t", usesExportData(cfg)),
-		fmt.Sprintf("-deps=%t", cfg.Mode&NeedDeps != 0),
+		fmt.Sprintf("-deps=%t", cfg.Mode&NeedImports != 0),
 		// go list doesn't let you pass -test and -find together,
 		// probably because you'd just get the TestMain.
 		fmt.Sprintf("-find=%t", !cfg.Tests && cfg.Mode&findFlags == 0),
